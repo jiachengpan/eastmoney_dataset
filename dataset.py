@@ -14,10 +14,19 @@ k_date_quarters = dict(
     二季 = 6,
     三季 = 9,
     四季 = 12,
+    中   = 6,
+    年   = 12,
 )
 
 def translate_date(date: str):
     m = re.match(r'(\d{4})年(.*季)', date)
+    if m:
+        year, quarter = m.groups()
+        month = k_date_quarters[quarter]
+        return (datetime.datetime.strptime(f'{year}-{month}', '%Y-%m') +
+                relativedelta(months = 1) + relativedelta(days = -1)).date()
+
+    m = re.match(r'(\d{4})年(.*)报', date)
     if m:
         year, quarter = m.groups()
         month = k_date_quarters[quarter]
@@ -124,7 +133,31 @@ def load_funds_perf_summary_and_preprocess(file, args = {}):
     # print(data.tail())
 
 def load_funds_topn_stocks_detail_and_preprocess(file, args = {}):
-    pass
+    print(f'loading {file} with {args}')
+    df = pd.read_excel(file, sheet_name = None, skiprows = 1, **args)
+
+    dfs = []
+    for sheetname, data in df.items():
+        data = data[data.columns[:-2]].dropna(how='all')
+        data = data[data['代码'].str.contains('数据来源：东方财富Choice数据') == False]
+
+        index = ['fund_id', 'fund_name', 'time', 'stock_id', 'stock_name']
+
+        data = data.melt(id_vars=data.columns.tolist()[:5]).dropna(how='any')
+        data.columns = index + ['indicator', 'value']
+        data.loc[:, ['time']] = data['time'].apply(translate_date)
+        data = data.pivot(index = index, columns = 'indicator', values = 'value')
+
+        dfs.append(data)
+
+    data = pd.concat(dfs, axis = 0).sort_index()
+    assert data.index.duplicated().sum() == 0, f'invalid data: {data.info()}'
+    return data
+
+    # print('=== funds topn stocks summary ===')
+    # print(data.info())
+    # print(data.head())
+    # print(data.tail())
 
 def preprocess_wrapper(processor, *args):
     try:
