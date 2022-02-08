@@ -18,6 +18,24 @@ k_date_quarters = dict(
     年   = 12,
 )
 
+def parse_multidim_column(name: str):
+    name = name.replace('_x000D_', ' ')
+
+    result_name = []
+    result_time = None
+    for tok in name.split():
+        m = re.match(r'\[(.+?)\](\S+)', tok)
+        if m:
+            key, value = m.groups()
+            if re.match(r'(\d{4})-(\d{2}-(\d{2}))', value):
+                result_time = datetime.datetime.strptime(value, '%Y-%m-%d').date()
+            else:
+                result_name.append(tok)
+        else:
+            result_name.append(tok)
+
+    return ' '.join(result_name), result_time
+
 def translate_date(date: str):
     m = re.match(r'(\d{4})年(.*季)', date)
     if m:
@@ -75,7 +93,75 @@ def load_stocks_and_preprocess(file, args = {}):
 
     data = pd.concat(dfs, axis = 0)
     assert data.index.duplicated().sum() == 0,  f'invalid data: {data.info()}'
-    return data
+    return [data]
+
+def load_stocks_multidim_and_preprocess(file, args = {}):
+    print(f'loading {file} with {args}')
+    df = pd.read_excel(file, sheet_name = None, skiprows = [0, 2], **args)
+
+    dfs_timed   = []
+    dfs_untimed = []
+    for sheetname, data in df.items():
+        assert all(data.columns[i] == f'Unnamed: {i}' for i in range(2)), f'invalid columns: {data.info()}'
+        data = data.rename({
+            'Unnamed: 0': 'stock_id',
+            'Unnamed: 1': 'stock_name',
+        }, axis=1).dropna(how='all')
+
+        columns_timed       = []
+        columns_timed_new   = []
+        columns_untimed     = []
+        columns_untimed_new = []
+        for c in data.columns[2:]:
+            name, time = parse_multidim_column(c)
+            if time is not None:
+                columns_timed.append(c)
+                columns_timed_new.append((name, time))
+            else:
+                columns_untimed.append(c)
+                columns_untimed_new.append(name)
+
+        index = ['stock_id', 'stock_name']
+        if columns_timed:
+            df = data[index + columns_timed]
+            df.columns = pd.MultiIndex.from_tuples([(c, '') for c in data.columns.tolist()[:2]] + columns_timed_new)
+
+            df = df.melt(id_vars=df.columns.tolist()[:2]).dropna(how='any')
+            df.columns = ['stock_id', 'stock_name', 'indicator', 'time', 'value']
+            df = df.pivot(index = ['stock_id', 'stock_name', 'time'], columns = 'indicator', values = 'value')
+
+            dfs_timed.append(df)
+
+            # print(f'  sheet: {sheetname} timed:')
+            # print(df.info())
+            # print(df.head())
+            # print(df.tail())
+
+        if columns_untimed:
+            df = data[index + columns_untimed]
+            df.columns = index + columns_untimed_new
+
+            df = df.melt(id_vars=df.columns.tolist()[:2]).dropna(how='any')
+            df.columns = ['stock_id', 'stock_name', 'indicator', 'value']
+            df = df.pivot(index = ['stock_id', 'stock_name'], columns = 'indicator', values = 'value')
+
+            dfs_untimed.append(df)
+
+            # print(f'  sheet: {sheetname} untimed:')
+            # print(df.info())
+            # print(df.head())
+            # print(df.tail())
+
+    result = []
+    if dfs_timed:
+        result.append(pd.concat(dfs_timed, axis = 0))
+        assert result[-1].index.duplicated().sum() == 0, f'invalid data: {result[-1].info()}'
+
+    if dfs_untimed:
+        result.append(pd.concat(dfs_untimed, axis = 0))
+        assert result[-1].index.duplicated().sum() == 0, f'invalid data: {result[-1].info()}'
+
+    return result
 
 def load_funds_and_preprocess(file, args = {}):
     print(f'loading {file} with {args}')
@@ -104,7 +190,7 @@ def load_funds_and_preprocess(file, args = {}):
 
     data = pd.concat(dfs, axis = 0)
     assert data.index.duplicated().sum() == 0,  f'invalid data: {data.info()}'
-    return data
+    return [data]
 
 def load_funds_perf_summary_and_preprocess(file, args = {}):
     print(f'loading {file} with {args}')
@@ -125,7 +211,7 @@ def load_funds_perf_summary_and_preprocess(file, args = {}):
 
     data = pd.concat(dfs, axis = 0).sort_index()
     assert data.index.duplicated().sum() == 0, f'invalid data: {data.info()}'
-    return data
+    return [data]
 
     # print('=== funds performance summary ===')
     # print(data.info())
@@ -152,7 +238,7 @@ def load_funds_topn_stocks_detail_and_preprocess(file, args = {}):
 
     data = pd.concat(dfs, axis = 0).sort_index()
     assert data.index.duplicated().sum() == 0, f'invalid data: {data.info()}'
-    return data
+    return [data]
 
     # print('=== funds topn stocks summary ===')
     # print(data.info())
@@ -203,15 +289,19 @@ def load_data(args):
 
         data_args = None
         name = m.group(1)
-        if   name.startswith('stock'):
-            data_args = [load_stocks_and_preprocess, file, {}]
+        if   name.startswith('stock.shareholder_ratio') or \
+             name.startswith('stock.avg_value') or \
+             name.startswith('stock.static_info'):
+            data_args = [load_stocks_multidim_and_preprocess, file]
+        elif name.startswith('stock'):
+            data_args = [load_stocks_and_preprocess, file]
         elif name.startswith('funds.perf_indicator') or \
              name.startswith('funds.value_indicator'):
-            data_args = [load_funds_and_preprocess, file, {}]
+            data_args = [load_funds_and_preprocess, file]
         elif name.startswith('funds.perf_summary'):
-            data_args = [load_funds_perf_summary_and_preprocess, file, {}]
+            data_args = [load_funds_perf_summary_and_preprocess, file]
         elif name.startswith('funds.topn_stocks_detail'):
-            data_args = [load_funds_topn_stocks_detail_and_preprocess, file, {}]
+            data_args = [load_funds_topn_stocks_detail_and_preprocess, file]
         else:
             print(f'skip file: {file}')
 
@@ -227,7 +317,7 @@ def load_data(args):
         for data_args in all_data_args:
             result.append(preprocess_wrapper(*data_args))
 
-    result = postprocess(result)
+    result = postprocess([r for res in result for r in res])
 
     os.makedirs(args.output, exist_ok=True)
     with open(os.path.join(args.output, 'raw_data.pkl'), 'wb') as f:
