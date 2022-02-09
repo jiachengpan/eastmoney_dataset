@@ -245,6 +245,76 @@ def load_funds_topn_stocks_detail_and_preprocess(file, args = {}):
     # print(data.head())
     # print(data.tail())
 
+def load_funds_multidim_and_preprocess(file, args = {}):
+    print(f'loading {file} with {args}')
+    df = pd.read_excel(file, sheet_name = None, skiprows = [0, 2], **args)
+
+    dfs_timed   = []
+    dfs_untimed = []
+    for sheetname, data in df.items():
+        assert all(data.columns[i] == f'Unnamed: {i}' for i in range(2)), f'invalid columns: {data.info()}'
+        data = data.rename({
+            'Unnamed: 0': 'fund_id',
+            'Unnamed: 1': 'fund_name',
+        }, axis=1).dropna(how='all')
+
+        columns_timed       = []
+        columns_timed_new   = []
+        columns_untimed     = []
+        columns_untimed_new = []
+        for c in data.columns[2:]:
+            name, time = parse_multidim_column(c)
+            if time is not None:
+                columns_timed.append(c)
+                columns_timed_new.append((name, time))
+            else:
+                columns_untimed.append(c)
+                columns_untimed_new.append(name)
+
+        index = ['fund_id', 'fund_name']
+        if columns_timed:
+            df = data[index + columns_timed]
+            df.columns = pd.MultiIndex.from_tuples([(c, '') for c in data.columns.tolist()[:2]] + columns_timed_new)
+
+            df = df.melt(id_vars=df.columns.tolist()[:2]).dropna(how='any')
+            df.columns = ['fund_id', 'fund_name', 'indicator', 'time', 'value']
+            df = df.pivot(index = ['fund_id', 'fund_name', 'time'], columns = 'indicator', values = 'value')
+
+            dfs_timed.append(df)
+
+            # print(f'  sheet: {sheetname} timed:')
+            # print(df.info())
+            # print(df.head())
+            # print(df.tail())
+
+        if columns_untimed:
+            df = data[index + columns_untimed]
+            df.columns = index + columns_untimed_new
+
+            df = df.melt(id_vars=df.columns.tolist()[:2]).dropna(how='any')
+            df.columns = ['fund_id', 'fund_name', 'indicator', 'value']
+            df = df.pivot(index = ['fund_id', 'fund_name'], columns = 'indicator', values = 'value')
+
+            dfs_untimed.append(df)
+
+            # print(f'  sheet: {sheetname} untimed:')
+            # print(df.info())
+            # print(df.head())
+            # print(df.tail())
+
+    result = []
+    if dfs_timed:
+        result.append(pd.concat(dfs_timed, axis = 0))
+        assert result[-1].index.duplicated().sum() == 0, f'invalid data: {result[-1].info()}'
+
+    if dfs_untimed:
+        result.append(pd.concat(dfs_untimed, axis = 0))
+        assert result[-1].index.duplicated().sum() == 0, f'invalid data: {result[-1].info()}'
+
+    return result
+
+
+
 def preprocess_wrapper(processor, *args):
     try:
         return processor(*args)
@@ -291,10 +361,15 @@ def load_data(args):
         name = m.group(1)
         if   name.startswith('stock.shareholder_ratio') or \
              name.startswith('stock.avg_value') or \
-             name.startswith('stock.static_info'):
+             name.startswith('stock.static_info') or \
+             name.startswith('stock.dynamic_indicators') or \
+             name.startswith('stock.static_indicators'):
             data_args = [load_stocks_multidim_and_preprocess, file]
         elif name.startswith('stock'):
             data_args = [load_stocks_and_preprocess, file]
+        elif name.startswith('funds.static_info') or \
+             name.startswith('funds.dynamic_indicators'):
+            data_args = [load_funds_multidim_and_preprocess, file]
         elif name.startswith('funds.perf_indicator') or \
              name.startswith('funds.value_indicator'):
             data_args = [load_funds_and_preprocess, file]
