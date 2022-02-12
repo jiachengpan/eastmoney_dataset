@@ -395,6 +395,10 @@ def load_data(args):
     result = postprocess([r for res in result for r in res])
 
     os.makedirs(args.output, exist_ok=True)
+    for k, v in result.items():
+        name = '.'.join(k)
+        v.to_csv(os.path.join(args.output, f'{name}.csv.gz'))
+
     with open(os.path.join(args.output, 'raw_data.pkl'), 'wb') as f:
         pickle.dump(result, f)
 
