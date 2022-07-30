@@ -229,13 +229,15 @@ def load_funds_topn_stocks_detail_and_preprocess(file, args = {}):
         data = data[data['代码'].str.contains('数据来源：东方财富Choice数据') == False]
 
         index = ['fund_id', 'fund_name', 'time', 'stock_id', 'stock_name']
+        index_columns = data.columns.tolist()[:5]
 
-        data = data.melt(id_vars=data.columns.tolist()[:5]).dropna(how='any')
+        data = data[~data.duplicated(index_columns)]
+        data = data.melt(id_vars=index_columns).dropna(how='any')
         data.columns = index + ['indicator', 'value']
         data.loc[:, ['time']] = data['time'].apply(translate_date)
 
-        #data.to_pickle(f'./topn_{sheetname}.pkl')
-        data = data[~data.duplicated(index)].pivot(index = index, columns = 'indicator', values = 'value')
+        data.to_pickle(f'./topn_{sheetname}.pkl')
+        data = data.pivot(index = index, columns = 'indicator', values = 'value')
 
         dfs.append(data)
 
