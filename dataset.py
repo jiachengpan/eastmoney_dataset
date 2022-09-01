@@ -318,7 +318,37 @@ def load_funds_multidim_and_preprocess(file, args = {}):
 
     return result
 
+def load_market_and_preprocess(file, args = {}):
+    print(f'loading {file} with {args}')
+    df = pd.read_excel(file, sheet_name = None, skiprows = 1, **args)
 
+    dfs = []
+    for sheetname, data in df.items():
+        if not len(data.columns):
+            continue
+        assert all(data.columns[i] == f'Unnamed: {i}' for i in range(3)), f'invalid columns: {data.info()}'
+        data = data.rename({
+            'Unnamed: 0': 'market_id',
+            'Unnamed: 1': 'market_name',
+            'Unnamed: 2': 'indicator',
+        }, axis=1).dropna(how='all')
+
+        data = data[data['market_id'].str.contains('数据来源：东方财富Choice数据') == False]
+        data = data.melt(id_vars=data.columns.tolist()[:3]).dropna(how='any')
+        data.columns = ['market_id', 'market_name', 'indicator', 'time', 'value']
+        data.loc[:, ['time']] = data['time'].apply(lambda d : d.date())
+        data = data.pivot(index = ['market_id', 'market_name', 'time'], columns = 'indicator', values = 'value')
+
+        dfs.append(data)
+
+        # print(f'  sheet: {sheetname}')
+        # print(data.info())
+        # print(data.head())
+        # print(data.tail())
+
+    data = pd.concat(dfs, axis = 0)
+    assert data.index.duplicated().sum() == 0,  f'invalid data: {data.info()}'
+    return [data]
 
 def preprocess_wrapper(processor, *args):
     try:
@@ -382,6 +412,8 @@ def load_data(args):
             data_args = [load_funds_perf_summary_and_preprocess, file]
         elif name.startswith('funds.topn_stocks_detail'):
             data_args = [load_funds_topn_stocks_detail_and_preprocess, file]
+        elif name.startswith('market_indicators'):
+            data_args = [load_market_and_preprocess, file]
         else:
             print(f'skip file: {file}')
 
