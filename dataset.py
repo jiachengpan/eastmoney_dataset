@@ -283,7 +283,15 @@ def load_funds_multidim_and_preprocess(file, args = {}):
 
             df = df.melt(id_vars=df.columns.tolist()[:2]).dropna(how='any')
             df.columns = ['fund_id', 'fund_name', 'indicator', 'time', 'value']
-            df = df.pivot(index = ['fund_id', 'fund_name', 'time'], columns = 'indicator', values = 'value')
+
+            index_columns = ['fund_id', 'fund_name', 'time']
+            dup_rows = df[df.duplicated(index_columns + ['indicator'], keep=False)].sort_values(index_columns)
+
+            if len(dup_rows) > 0:
+                print('-- duplicated rows --')
+                print(dup_rows)
+
+            df = df.pivot(index = index_columns, columns = 'indicator', values = 'value')
 
             dfs_timed.append(df)
 
